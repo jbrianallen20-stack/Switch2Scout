@@ -1,0 +1,14 @@
+{
+  "name": "switch2-scout",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Stock checker for the Nintendo Switch 2 Zelda 40th Anniversary Edition across multiple retailers, with Discord alerts.",
+  "main": "src/scout.js",
+  "scripts": {
+    "check": "node src/scout.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "cheerio": "^1.0.0"
+  }
+}

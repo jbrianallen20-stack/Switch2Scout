@@ -33,10 +33,6 @@ const TARGETS = [
     url: 'https://www.nintendo.com/us/store/products/nintendo-switch-2-the-legend-of-zelda-40th-anniversary-edition-121642/',
   },
   {
-    name: 'Walmart',
-    url: 'https://www.walmart.com/ip/Nintendo-Switch-2-The-Legend-of-Zelda-40th-Anniversary-Edition/21002656445',
-  },
-  {
     name: 'GameStop',
     url: 'https://www.gamestop.com/consoles-hardware/nintendo-switch-2/products/nintendo-switch-2-the-legend-of-zelda-40th-anniversary-edition/20037854.html',
   },
@@ -48,6 +44,8 @@ const TARGETS = [
     name: 'Best Buy',
     url: 'https://www.bestbuy.com/product/switch-2-the-legend-of-zelda-40th-anniversary-edition/J7GSL57HTY',
   },
+  // ⚠️ Your Walmart entry went here — add it back, e.g.:
+  // { name: 'Walmart', url: 'https://www.walmart.com/ip/...' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -92,6 +90,37 @@ const BLOCKED_PHRASES = [
   'bot detection',
   'enable javascript and cookies',
 ];
+
+// Retailer pages routinely include "you might also like" style carousels
+// further down the page, each with their own Add to Cart buttons for
+// completely unrelated products. Scanning the whole page's text would
+// pick those up as false positives. Instead, we only check the text that
+// comes before the first such section — that's reliably where the real
+// buy box (price, stock status, actual buy button) for the item we care
+// about lives on every retailer page seen so far.
+const RECOMMENDATION_BOUNDARY_PHRASES = [
+  'discover more options',
+  'consider these accessories',
+  'guests also viewed',
+  'customers also viewed',
+  'customers also bought',
+  'frequently bought together',
+  'you may also like',
+  'similar items',
+  'related products',
+  'recommended for you',
+  'shop similar items',
+  'more like this',
+];
+
+function primarySectionOnly(pageText) {
+  let cutoff = pageText.length;
+  for (const phrase of RECOMMENDATION_BOUNDARY_PHRASES) {
+    const idx = pageText.indexOf(phrase);
+    if (idx !== -1 && idx < cutoff) cutoff = idx;
+  }
+  return pageText.slice(0, cutoff);
+}
 
 const REQUEST_HEADERS = {
   'User-Agent':
@@ -169,21 +198,30 @@ async function checkTarget(target) {
       return { status: 'blocked', detail: 'Page looked like a bot-check or was empty' };
     }
 
-    const hasOutOfStockPhrase = OUT_OF_STOCK_PHRASES.some((p) => pageText.includes(p));
-    const hasInStockPhrase = IN_STOCK_PHRASES.some((p) => pageText.includes(p));
+    // Only check the part of the page before any cross-sell/recommendation
+    // carousel — those sections are full of unrelated products' own
+    // "Add to Cart" buttons and would otherwise cause false positives.
+    const primaryText = primarySectionOnly(pageText);
 
-    // Per spec: alert if a buy phrase is present, OR if none of the
-    // out-of-stock phrases were found at all (better a false positive
-    // you can dismiss in two seconds than a missed restock).
-    const shouldAlert = hasInStockPhrase || !hasOutOfStockPhrase;
+    const hasOutOfStockPhrase = OUT_OF_STOCK_PHRASES.some((p) => primaryText.includes(p));
+    const hasInStockPhrase = IN_STOCK_PHRASES.some((p) => primaryText.includes(p));
+
+    // An explicit out-of-stock phrase wins even when a buy/pre-order phrase
+    // also appears nearby — some retailers (Target, at least) leave a
+    // "Pre-order"/"Add to Cart" button in the page markup and just disable
+    // it while showing "Out of Stock" as the real status, so buy-phrase
+    // text alone isn't proof of availability. We still alert when neither
+    // kind of phrase is found at all, since an unrecognized page state is
+    // worth a manual look rather than assumed to be fine.
+    const shouldAlert = !hasOutOfStockPhrase;
 
     let detail;
-    if (hasInStockPhrase) {
-      detail = 'A buy/pre-order phrase was detected on the page.';
-    } else if (!hasOutOfStockPhrase) {
-      detail = 'No known out-of-stock phrase was found on the page — worth a manual look.';
+    if (hasOutOfStockPhrase) {
+      detail = 'Out-of-stock phrase detected (takes priority over any buy-phrase text also on the page).';
+    } else if (hasInStockPhrase) {
+      detail = 'A buy/pre-order phrase was detected with no out-of-stock phrase present.';
     } else {
-      detail = 'Out-of-stock phrase detected.';
+      detail = 'No known status phrase was found on the page — worth a manual look.';
     }
 
     return { status: shouldAlert ? 'alert' : 'quiet', detail };

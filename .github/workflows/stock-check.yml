@@ -51,7 +51,7 @@ jobs:
             fi
             echo "Push rejected — pulling and retrying ($i/5)..."
             git fetch origin main
-            git rebase origin/main
+            git rebase -X theirs origin/main
           done
           echo "Failed to push after retries."
           exit 1
